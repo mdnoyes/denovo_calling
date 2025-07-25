@@ -1,0 +1,6 @@
+{
+  "asm_manifest": "/net/eichler/vol28/projects/denovo_variation/nobackups/combined_batches/manifests/asm_manifest.tab",
+  "raw_dir": "/net/eichler/vol28/projects/denovo_variation/nobackups/combined_batches/mnm_calling/raw_calls",
+  "validated_dir": "/net/eichler/vol28/projects/denovo_variation/nobackups/combined_batches/haplotypes/mnms/results",
+  "reference": "/net/eichler/vol28/projects/denovo_variation/nobackups/combined_batches/reference/T2T-CHM13v2.fasta"
+}

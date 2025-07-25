@@ -1,0 +1,250 @@
+import pandas as pd
+from itertools import product
+from itertools import chain
+from dataclasses import dataclass
+
+configfile: "config.json"
+
+REF = config["ref"]
+MANIFEST = config["manifest"]
+BED = config["bed"]
+INTERVALS = config["intervals"]
+PICARD = config["picard"]
+
+@dataclass
+class Child:
+	father: str
+	mother: str
+
+intervals = []
+with open(INTERVALS, 'r') as interval_file:
+	for line in interval_file:
+		intervals.append(line.rstrip())
+
+chr_df = pd.read_csv(BED, sep="\t", low_memory=False, index_col=0, header=None)
+chrs = chr_df.index
+
+trio_members = ['father', 'mother', 'child']
+
+manifest_df = pd.read_csv(MANIFEST, sep="\t", low_memory=False, header=0, dtype=str, keep_default_na=False)
+families = list(set(manifest_df.family))
+sample_dict = {}
+child_dict = {}
+sample_names = []
+
+for idx, row in manifest_df.iterrows():
+	sm = row["sample"]; fm = row["family"]
+	sm_id = f"{fm}_{sm}"
+	if(fm not in sample_dict):
+		sample_dict[fm] = []
+	sample_dict[fm].append(sm)
+	sample_names.append(f'{fm}_{sm}')
+	if row["father"] and row["mother"]:
+		child_dict[sm_id] = Child(row['father'], row['mother'])
+
+children = child_dict.keys()
+samples = set(chain(*sample_dict.values()))
+
+localrules: all
+
+def filter_samples(*args, **kwargs):
+	for wc_comb in product(*args, **kwargs):
+		sm_id = "_".join(x[1] for x in wc_comb[0:2])
+		if sm_id in sample_names:
+			yield(wc_comb)
+
+def filter_children(*args, **kwargs):
+	for wc_comb in product(*args, **kwargs):
+		sm_id = "_".join(x[1] for x in wc_comb[0:2])
+		if sm_id in children:
+			yield(wc_comb)
+
+def find_cram(wildcards):
+	return manifest_df.loc[(manifest_df["family"] == wildcards.family) & \
+						   (manifest_df["sample"] == wildcards.sample), 'hifi'].values[0]
+
+def get_samples(wildcards):
+	return [wildcards.family + "_" + x for x in sample_dict[wildcards.family]]
+
+def get_file_list(child, chromosome, family_member):
+	relevant_intervals = [x for x in intervals if x.startswith(f'{chromosome}_')]
+	if family_member == 'father':
+		sample = child_dict[child].father
+	elif family_member == 'mother':
+		sample = child_dict[child].mother
+	else:
+		sample = child
+
+	file_list = [f'read_counts/{sample}.{interval}.tsv.gz' for interval in relevant_intervals]
+
+	return file_list
+
+
+wildcard_constraints:
+	sample = "|".join(samples),
+	family = "|".join(families),
+	chr = "|".join(chr_df.index),
+	interval = "|".join(intervals)
+
+rule all:
+	input:
+		expand("vcfs/{family}_{sample}.{chr}.vcf.gz", filter_samples, family = families, sample = samples, chr = chr_df.index),
+		expand("chr_files/{family}_{sample}.{chr}.candidate_callable.tsv.gz", filter_children, family = families, sample = samples, chr = chr_df.index),
+		expand("read_counts/{family}_{sample}.{interval}.tsv.gz", filter_samples, family = families, sample = samples, interval = intervals),
+		expand("callable_sites/{family}_{sample}.{chr}.callable.tsv.gz", filter_children, family = families, sample = samples, chr = chr_df.index),
+		expand("results/{family}_{sample}.callable_regions.tsv", filter_children, family = families, sample = samples)
+
+rule split_bed:
+	input:
+		bed = BED
+	output:
+		split =	expand("bed/{chr}.bed", chr=chr_df.index)
+	resources:
+		mem = 2,
+		hrs = 2
+	shell: """
+		chrs=$(cut -f1 {input.bed})
+		for chr in $chrs; do grep -w $chr {input.bed} > bed/$chr.bed; done
+	"""
+
+rule haplotypecaller:
+	input:
+		bed = "bed/{chr}.bed",
+		cram = find_cram,
+		ref = REF
+	output:
+		vcf = "vcfs/{family}_{sample}.{chr}.vcf.gz"
+	log:
+		"log/haplotypecaller_{family}_{sample}_{chr}.log"
+	threads: 4
+	resources:
+		mem = 16,
+		hrs = 96
+	shell: """
+		source /etc/profile.d/modules.sh
+		module load java/1.8.0 GATK/4.3.0.0
+
+		sample={wildcards.sample}
+		fam={wildcards.family}
+
+		gatk --java-options -Xmx12G HaplotypeCaller \
+			--pair-hmm-implementation LOGLESS_CACHING \
+			--native-pair-hmm-threads 4 \
+			--reference {input.ref} \
+			--input {input.cram} \
+			--output {output.vcf} \
+			--pcr-indel-model AGGRESSIVE \
+			--intervals {input.bed} \
+			--minimum-mapping-quality 60 \
+			--read-filter MappingQualityReadFilter \
+			--read-filter NotSecondaryAlignmentReadFilter \
+			--read-filter NotSupplementaryAlignmentReadFilter \
+			-ERC BP_RESOLUTION
+	"""
+
+rule combine_vcfs:
+	input:
+		sample = "vcfs/{family}_{sample}.{chr}.vcf.gz",
+		father = lambda wildcards: "vcfs/" + child_dict[f"{wildcards.family}_{wildcards.sample}"].father + f".{wildcards.chr}.vcf.gz",
+		mother = lambda wildcards: "vcfs/" + child_dict[f"{wildcards.family}_{wildcards.sample}"].mother + f".{wildcards.chr}.vcf.gz"
+	output:
+		combined_data = "chr_files/{family}_{sample}.{chr}.candidate_callable.tsv.gz"
+	log:
+		"log/combine_vcfs_{family}_{sample}_{chr}.log"
+	resources:
+		mem = 16,
+		hrs = 4
+	conda:
+		"envs/env.yaml"
+	script:
+		"scripts/combine_vcfs.py"
+
+rule subset_bam:
+	input:
+		bam = find_cram,
+		bed = "bed/{interval}.bed"
+	output:
+		subsetted_bam = temp("bams/{family}_{sample}.{interval}.bam"),
+		index = temp("bams/{family}_{sample}.{interval}.bam.bai")
+	log:
+		"log/subset_bam_{family}_{sample}_{interval}.log"
+	resources:
+		mem = 16,
+		hrs = 8
+	shell: """
+
+		samtools view -h -q 59 -G 2048 -o {output.subsetted_bam} --region-file {input.bed} {input.bam}
+		samtools index {output.subsetted_bam}
+
+	"""
+
+rule check_reads:
+	input:
+		subsetted_bam = "bams/{family}_{sample}.{interval}.bam",
+		index = "bams/{family}_{sample}.{interval}.bam.bai"
+	output:
+		read_data = "read_counts/{family}_{sample}.{interval}.tsv.gz"
+	params:
+		sample = "{family}_{sample}",
+		hifi_sources = "../hifi_sources.tsv",
+		interval = "{interval}"
+	log:
+		"log/check_reads_{family}_{sample}_{interval}.log"
+	resources:
+		mem = 4,
+		hrs = 48
+	conda:
+		"envs/env.yaml"
+	script:
+		"scripts/check_reads.py"
+
+rule get_callable_sites:
+	input:
+		genotyped_sites = "chr_files/{family}_{sample}.{chr}.candidate_callable.tsv.gz",
+		dad_intervals = lambda wildcards: get_file_list(f'{wildcards.family}_{wildcards.sample}', f'{wildcards.chr}', 'father'),
+		mom_intervals = lambda wildcards: get_file_list(f'{wildcards.family}_{wildcards.sample}', f'{wildcards.chr}', 'mother'),
+		child_intervals = lambda wildcards: get_file_list(f'{wildcards.family}_{wildcards.sample}', f'{wildcards.chr}', 'child')
+	output:
+		callable_sites = "callable_sites/{family}_{sample}.{chr}.callable.tsv.gz",
+		dnms = "candidate_dnms/{family}_{sample}.{chr}.dnms.tsv"
+	log:
+		"log/get_callable_{family}_{sample}_{chr}.log"
+	resources:
+		mem = 4,
+		hrs = 48
+	conda:
+		"envs/env.yaml"
+	script:
+		"scripts/get_callable_sites.py"
+
+rule make_callable_bed:
+	input:
+		callable_sites = expand("callable_sites/{{family}}_{{sample}}.{chr}.callable.tsv.gz", chr = chr_df.index)
+	output:
+		full_bed = "callable_beds/{family}_{sample}.callable.bed"
+	log:
+		"log/get_callable_bed_{family}_{sample}.log"
+	resources:
+		mem = 4,
+		hrs = 48
+	conda:
+		"envs/env.yaml"
+	script:
+		"scripts/make_callable_beds.py"
+
+rule calculate_callable_size:
+	input:
+		callable_bed = "callable_beds/{family}_{sample}.callable.bed"
+	output:
+		callable_sizes = "results/{family}_{sample}.callable_regions.tsv"
+	log:
+		"log/get_callable_bed_{family}_{sample}.log"
+	params:
+		sample = "{family}_{sample}"
+	resources:
+		mem = 4,
+		hrs = 48
+	conda:
+		"envs/env.yaml"
+	script:
+		"scripts/calculate_accessible_sizes.py"

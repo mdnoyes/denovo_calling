@@ -1,0 +1,8 @@
+{
+  "vcf_manifest": "/net/eichler/vol28/projects/denovo_variation/nobackups/combined_batches/manifests/vcf_manifest.tab",
+  "bam_manifest": "/net/eichler/vol28/projects/denovo_variation/nobackups/combined_batches/manifests/bam_manifest.tab",
+  "ref": "/net/eichler/vol28/projects/denovo_variation/nobackups/combined_batches/reference/T2T-CHM13v2.fasta",
+  "hifi_sources": "/net/eichler/vol28/projects/denovo_variation/nobackups/combined_batches/manifests/hifi_sources.tsv",
+  "cell_line_samples": "/net/eichler/vol28/projects/denovo_variation/nobackups/combined_batches/manifests/cell_line_only.txt",
+  "picard": "/net/eichler/vol28/home/mdnoyes/nobackups/software/picard/picard-tools-2.5.0/picard.jar"
+}

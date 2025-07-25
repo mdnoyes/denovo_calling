@@ -1,0 +1,134 @@
+import pandas as pd
+import numpy as np
+from itertools import product
+from itertools import chain
+from dataclasses import dataclass
+
+configfile: "config.json"
+
+REF = config["ref"]
+BAM_MANIFEST = config["bam_manifest"]
+HIFI_SOURCES = config["hifi_sources"]
+
+callers = ['gatk', 'deepvariant']
+platforms = ['hifi', 'ont', 'illumina']
+
+@dataclass
+class Child:
+	father: str
+	mother: str
+
+manifest_df = pd.read_csv(BAM_MANIFEST, sep="\t", low_memory=False, header=0, dtype=str, keep_default_na=False)
+families = list(set(manifest_df.family))
+sample_dict = {}
+child_dict = {}
+
+for idx, row in manifest_df.iterrows():
+	sm = row["sample"]; fm = row["family"]
+	sm_id = f"{fm}_{sm}"
+	if(fm not in sample_dict):
+		sample_dict[fm] = []
+	sample_dict[fm].append(sm)
+	if row["father"] and row["mother"]:
+		if row["sex"] == "F":
+			child_dict[sm_id] = Child(row['father'], row['mother'])
+
+children = child_dict.keys()
+samples = set(chain(*sample_dict.values()))
+
+def filter_children(*args, **kwargs):
+	for wc_comb in product(*args, **kwargs):
+		sm_id = "_".join(x[1] for x in wc_comb[0:2])
+		if sm_id in children:
+			yield(wc_comb)
+
+def get_trio(wildcards):
+	child = '_'.join([wildcards.family, wildcards.sample])
+	father = child_dict[child].father
+	mother = child_dict[child].mother
+
+	return ','.join([father, mother, child])
+
+def get_mapq(wildcards):
+	if wildcards.platform == 'illumina':
+		return 0
+	else:
+		return 59
+
+def get_sources(wildcards):
+	if wildcards.platform == 'hifi':
+		return '-s /net/eichler/vol28/projects/denovo_variation/nobackups/quads_batch_2/hifi_sources.tsv'
+	else:
+		return ''
+
+wildcard_constraints:
+	family="|".join(families),
+	samples="|".join(samples)
+
+localrules: all
+
+rule all:
+	input:
+		expand("validated_calls/{family}_{sample}_indel_validation.tsv", filter_children, family = families, sample = samples)
+
+
+rule find_indels_in_trs:
+	input:
+		indel_calls = "raw_calls/{family}_{sample}.hifi_denovo_indels.tsv"
+	output:
+		trs = "indel_calls/{family}_{sample}.tr_indels.tsv",
+		non_trs = "indel_calls/{family}_{sample}.indels_no_trs.tsv"
+	params:
+		trf = "/net/eichler/vol28/projects/denovo_variation/nobackups/quads_batch_2/reference/chm13v2.0_simple_repeats.bed"
+	log:
+		"log/find_strs_{family}_{sample}.log"
+	resources:
+		mem = 24,
+		hrs = 4
+	conda:
+		"envs/env.yaml"
+	script:
+		"scripts/find_indels_in_trs.py"
+
+rule get_indel_read_depth:
+	input:
+		indels = "indel_calls/{family}_{sample}.indels_no_trs.tsv"
+	output:
+		read_summary = "read_data/{family}_{sample}_{platform}_indel_read_summary.tsv"
+	params:
+		reference = REF,
+		bam_manifest = BAM_MANIFEST,
+		family = "{family}",
+		platform = "{platform}",
+		sample = "{sample}",
+		hifi_sources = HIFI_SOURCES
+	log:
+		"log/read_data_{family}_{sample}_{platform}_indel_depth.log"
+	resources:
+		mem = 36,
+		hrs = 24
+	conda:
+		"envs/env.yaml"
+	script:
+		"scripts/check_indel_read_data.py"
+
+
+rule filter_indels:
+	input:
+		read_summary = expand("read_data/{{family}}_{{sample}}_{platform}_indel_read_summary.tsv", platform = platforms),
+		manifest = BAM_MANIFEST
+	output:
+		validated_indels = "validated_calls/{family}_{sample}_indel_validation.tsv"
+	params:
+		father = lambda wildcards: child_dict[f"{wildcards.family}_{wildcards.sample}"].father,
+		mother = lambda wildcards: child_dict[f"{wildcards.family}_{wildcards.sample}"].mother,
+		sample = "{family}_{sample}"
+	log:
+		"log/read_data_{family}_{sample}_indel_validation.log"
+	resources:
+		mem = 24,
+		hrs = 4
+	conda:
+		"envs/env.yaml"
+	script:
+		"scripts/combine_indel_validations.py"

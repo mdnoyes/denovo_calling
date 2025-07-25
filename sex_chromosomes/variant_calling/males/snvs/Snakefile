@@ -1,0 +1,427 @@
+import pandas as pd
+import numpy as np
+from itertools import product
+from itertools import chain
+from dataclasses import dataclass
+
+configfile: "config.json"
+
+REF = config["ref"]
+VCF_MANIFEST = config["vcf_manifest"]
+BAM_MANIFEST = config["bam_manifest"]
+HIFI_SOURCES = config["hifi_sources"]
+
+platforms = ['hifi', 'ont', 'illumina']
+
+@dataclass
+class Child:
+	father: str
+	mother: str
+
+vcf_manifest = pd.read_csv(VCF_MANIFEST, sep="\t", low_memory=False, header=0, dtype=str)
+
+manifest_df = pd.read_csv(BAM_MANIFEST, sep="\t", low_memory=False, header=0, dtype=str, keep_default_na=False)
+families = list(set(manifest_df.family))
+sample_dict = {}
+child_dict = {}
+
+for idx, row in manifest_df.iterrows():
+	sm = row["sample"]; fm = row["family"]
+	sm_id = f"{fm}_{sm}"
+	if(fm not in sample_dict):
+		sample_dict[fm] = []
+	sample_dict[fm].append(sm)
+	if row["father"] and row["mother"]:
+		if row["sex"] == "M":
+			child_dict[sm_id] = Child(row['father'], row['mother'])
+
+children = child_dict.keys()
+samples = set(chain(*sample_dict.values()))
+
+def filter_children(*args, **kwargs):
+	for wc_comb in product(*args, **kwargs):
+		sm_id = "_".join(x[1] for x in wc_comb[0:2])
+		if sm_id in children:
+			yield(wc_comb)
+
+def get_vcf(wildcards):
+	return vcf_manifest.loc[vcf_manifest['family'] == wildcards.family][wildcards.caller].values[0]
+
+def get_trio(wildcards):
+	child = '_'.join([wildcards.family, wildcards.sample])
+	father = child_dict[child].father
+	mother = child_dict[child].mother
+
+	return ','.join([father, mother, child])
+
+localrules: all
+
+rule all:
+	input:
+		expand("raw_calls/{family}_{sample}_y_no_par_snvs.tsv", filter_children, family = families, sample = samples),
+		expand("read_data/chrY_no_PAR/{family}_{sample}_{platform}.validated.tsv", filter_children, family = families, sample = samples, platform = platforms),
+		expand("validated_calls/chrY_no_PAR/{family}_{sample}.validated_calls.tsv", filter_children, family = families, sample = samples),
+		expand("raw_calls/{family}_{sample}_chrX_snvs.tsv", filter_children, family = families, sample = samples),
+		expand("read_data/chrX_no_PAR/{family}_{sample}_{platform}.validated.tsv", filter_children, family = families, sample = samples, platform = platforms),
+		expand("validated_calls/chrX_no_PAR/{family}_{sample}_relitigated.tsv", filter_children, family = families, sample = samples)
+
+rule make_Y_no_PAR_vcf:
+	input:
+		family_vcf = lambda wildcards: vcf_manifest.loc[vcf_manifest['family'] == wildcards.family]['male_Y_no_PAR'].values[0],
+		bed = "beds/chrY.bed"
+	output:
+		y_no_par_vcf = "vcfs/{family}_{sample}_y_no_par.vcf.gz",
+		index = "vcfs/{family}_{sample}_y_no_par.vcf.gz.tbi"
+	params:
+		child = "{family}_{sample}",
+		father = lambda wildcards: child_dict[f"{wildcards.family}_{wildcards.sample}"].father
+	log:
+		"log/make_Y_no_PAR_vcf_{family}_{sample}.log"
+	resources:
+		mem = 8,
+		hrs = 8
+	shell: """
+		source /etc/profile.d/modules.sh
+		module load htslib/1.19 bcftools/1.19 tabix/0.2.6
+
+		bcftools view \
+			-s {params.father},{params.child} \
+			-R {input.bed} \
+			{input.family_vcf} | \
+			grep -v "*" | \
+			bgzip > {output.y_no_par_vcf}
+
+		tabix {output.y_no_par_vcf}
+
+	"""
+
+rule Y_no_par_naive:
+	input:
+		y_no_par_vcf = "vcfs/{family}_{sample}_y_no_par.vcf.gz"
+	output:
+		snvs = "raw_calls/{family}_{sample}_y_no_par_snvs.tsv",
+		indels = "raw_calls/{family}_{sample}_y_no_par_indels.tsv"
+	params:
+		child = "{family}_{sample}",
+		father = lambda wildcards: child_dict[f"{wildcards.family}_{wildcards.sample}"].father
+	log:
+		"log/naive_chrY_{family}_{sample}.log"
+	resources:
+		mem = 2,
+		hrs = 2
+	conda:
+		"envs/env.yaml"
+	script:
+		"scripts/naive_inheritance/Y_no_par.py"
+
+rule check_Y_no_par_reads:
+	input:
+		snvs = "raw_calls/{family}_{sample}_y_no_par_snvs.tsv",
+		bam_manifest = BAM_MANIFEST
+	output:
+		read_data = "read_data/chrY_no_PAR/{family}_{sample}_{platform}.read_data.tsv"
+	params:
+		child = "{sample}",
+		platform = "{platform}",
+		family = "{family}"
+	log:
+		"log/check_reads_chrY_{family}_{sample}_{platform}.log"
+	resources:
+		mem = 4,
+		hrs = 2
+	conda:
+		"envs/env.yaml"
+	script:
+		"scripts/check_read_data/check_Y_no_PAR.py"
+
+rule filter_Y_no_par_reads:
+	input:
+		snv_calls = "raw_calls/{family}_{sample}_y_no_par_snvs.tsv",
+		read_data = "read_data/chrY_no_PAR/{family}_{sample}_{platform}.read_data.tsv"
+	output:
+		platform_validation = "read_data/chrY_no_PAR/{family}_{sample}_{platform}.validated.tsv"
+	params:
+		parent = lambda wildcards: child_dict[f"{wildcards.family}_{wildcards.sample}"].father,
+		hifi_sources = HIFI_SOURCES,
+		platform = "{platform}",
+		child = "{family}_{sample}"
+	log:
+		"log/filter_reads_chrY_{family}_{sample}_{platform}.log"
+	resources:
+		mem = 4,
+		hrs = 2
+	conda:
+		"envs/env.yaml"
+	script:
+		"scripts/filter_snv_reads.py"
+
+rule combine_Y_no_par_validations:
+	input:
+		platform_validations = expand("read_data/chrY_no_PAR/{{family}}_{{sample}}_{platform}.validated.tsv", platform = platforms)
+	output:
+		validated_calls = "validated_calls/chrY_no_PAR/{family}_{sample}.validated_calls.tsv"
+	log:
+		"log/combine_chrY_validations_{family}_{sample}.log"
+	resources:
+		mem = 4,
+		hrs = 2
+	conda:
+		"envs/env.yaml"
+	script:
+		"scripts/combine_validations.py"
+
+rule make_mom_chrX_vcf:
+	input:
+		female_vcf = lambda wildcards: vcf_manifest.loc[vcf_manifest['family'] == wildcards.family]['female_X'].values[0],
+		bed = "beds/chrX_no_PARS.bed"
+	output:
+		mom_vcf = temp("vcfs/{family}_{sample}_mom_chrX.vcf.gz"),
+		mom_index = temp("vcfs/{family}_{sample}_mom_chrX.vcf.gz.tbi")
+	params:
+		child = "{family}_{sample}",
+		mother = lambda wildcards: child_dict[f"{wildcards.family}_{wildcards.sample}"].mother
+	log:
+		"log/make_mom_chrX_vcf{family}_{sample}.log"
+	resources:
+		mem = 2,
+		hrs = 8
+	shell: """
+		source /etc/profile.d/modules.sh
+		module load htslib/1.19 bcftools/1.19 tabix/0.2.6
+
+		child={params.child}
+		mom={params.mother}
+
+		bcftools view \
+			-s {params.mother} \
+			-R {input.bed} \
+			{input.female_vcf} | \
+			grep -v "*" | \
+			bgzip > "$child"_mom.vcf.gz
+
+		tabix "$child"_mom.vcf.gz
+
+		awk -v s="$mom" '{{print $0"\t"s}}' vcf_headers/vcf_columns.tsv > "$child"_mom.columns.txt
+		cat vcf_headers/vcf_header.txt "$child"_mom.columns.txt > "$child"_mom.header.txt
+
+		bcftools reheader -h "$child"_mom.header.txt "$child"_mom.vcf.gz > {output.mom_vcf}
+		tabix {output.mom_vcf}
+
+		rm "$child"_mom.*
+
+	"""
+
+rule make_child_chrX_vcf:
+	input:
+		male_vcf = lambda wildcards: vcf_manifest.loc[vcf_manifest['family'] == wildcards.family]['male_X_no_PAR'].values[0],
+		bed = "beds/chrX_no_PARS.bed"
+	output:
+		child_vcf = temp("vcfs/{family}_{sample}_chrX.vcf.gz"),
+		index = temp("vcfs/{family}_{sample}_chrX.vcf.gz.tbi")
+	params:
+		child = "{family}_{sample}"
+	log:
+		"log/make_child_chrX_vcf_{family}_{sample}.log"
+	resources:
+		mem = 2,
+		hrs = 8
+	shell: """
+		source /etc/profile.d/modules.sh
+		module load htslib/1.19 bcftools/1.19 tabix/0.2.6
+
+		child={params.child}
+
+		bcftools view -H \
+			-s {params.child} \
+			-R {input.bed} \
+			{input.male_vcf} | \
+			grep -v "*" | \
+			awk '{{print $1, $2, $3, $4, $5, $6, $7, $8, $9, substr($10,1,1)"/"($10)}}' | \
+			sed 's/ /\t/g' > "$child".vcf
+
+		awk -v s="$child" '{{print $0"\t"s}}' vcf_headers/vcf_columns.tsv > "$child".columns.txt
+		cat vcf_headers/vcf_header.txt "$child".columns.txt > "$child".header.txt
+
+		cat "$child".header.txt "$child".vcf | bgzip > {output.child_vcf}
+		tabix {output.child_vcf}
+
+		rm "$child".*
+
+	"""
+
+rule combine_chrX_vcfs:
+	input:
+		mom_vcf = "vcfs/{family}_{sample}_mom_chrX.vcf.gz",
+		mom_index= "vcfs/{family}_{sample}_mom_chrX.vcf.gz.tbi",
+		child_vcf = "vcfs/{family}_{sample}_chrX.vcf.gz",
+		child_index = "vcfs/{family}_{sample}_chrX.vcf.gz.tbi"
+	output:
+		chrX_vcf = "vcfs/{family}_{sample}_chrX_no_par.vcf.gz"
+	log:
+		"log/combine_chrX_vcf_{family}_{sample}.log"
+	resources:
+		mem = 2,
+		hrs = 8
+	shell: """
+		source /etc/profile.d/modules.sh
+		module load htslib/1.19 bcftools/1.19 tabix/0.2.6
+
+		bcftools merge {input.mom_vcf} {input.child_vcf} -O z -o {output.chrX_vcf}
+		tabix {output.chrX_vcf}
+
+	"""
+
+rule chrX_naive:
+	input:
+		chrX_vcf = "vcfs/{family}_{sample}_chrX_no_par.vcf.gz"
+	output:
+		snvs = "raw_calls/{family}_{sample}_chrX_snvs.tsv",
+		indels = "raw_calls/{family}_{sample}_chrX_indels.tsv"
+	params:
+		child = "{family}_{sample}",
+		mother = lambda wildcards: child_dict[f"{wildcards.family}_{wildcards.sample}"].mother
+	log:
+		"log/naive_chrX_{family}_{sample}.log"
+	resources:
+		mem = 2,
+		hrs = 2
+	conda:
+		"envs/env.yaml"
+	script:
+		"scripts/naive_inheritance/chrX_no_par.py"
+
+rule check_chrX_no_par_reads:
+	input:
+		snv_calls = "raw_calls/{family}_{sample}_chrX_snvs.tsv"
+	output:
+		read_data = "read_data/chrX_no_PAR/{family}_{sample}_{platform}.read_data.tsv",
+		read_summary = "read_data/chrX_no_PAR/{family}_{sample}_{platform}.read_summary.tsv"
+	params:
+		child = "{sample}",
+		platform = "{platform}",
+		family = "{family}",
+		bam_manifest = BAM_MANIFEST,
+		who = 'family'
+	log:
+		"log/check_reads_chrX_{family}_{sample}_{platform}.log"
+	resources:
+		mem = 4,
+		hrs = 2
+	conda:
+		"envs/env.yaml"
+	script:
+		"scripts/check_read_data/check_snv_read_data.py"
+
+rule filter_X_no_par_reads:
+	input:
+		snv_calls = "raw_calls/{family}_{sample}_chrX_snvs.tsv",
+		read_data = "read_data/chrX_no_PAR/{family}_{sample}_{platform}.read_data.tsv"
+	output:
+		platform_validation = "read_data/chrX_no_PAR/{family}_{sample}_{platform}.validated.tsv"
+	params:
+		parent = lambda wildcards: child_dict[f"{wildcards.family}_{wildcards.sample}"].mother,
+		hifi_sources= HIFI_SOURCES,
+		platform = "{platform}",
+		child = "{family}_{sample}"
+	log:
+		"log/filter_reads_chrX_{family}_{sample}_{platform}.log"
+	resources:
+		mem = 4,
+		hrs = 2
+	conda:
+		"envs/env.yaml"
+	script:
+		"scripts/filter_snv_reads.py"
+
+rule combine_chrX_no_par_validations:
+	input:
+		platform_validations = expand("read_data/chrX_no_PAR/{{family}}_{{sample}}_{platform}.validated.tsv", platform = platforms)
+	output:
+		validated_calls = "validated_calls/chrX_no_PAR/{family}_{sample}.validated_calls.tsv"
+	log:
+		"log/combine_chrX_validations_{family}_{sample}.log"
+	resources:
+		mem = 4,
+		hrs = 2
+	conda:
+		"envs/env.yaml"
+	script:
+		"scripts/combine_validations.py"
+
+rule check_other_samples:
+		input:
+				snv_calls = "validated_calls/chrX_no_PAR/{family}_{sample}.validated_calls.tsv"
+		output:
+				depth_stats = "read_data/chrX_no_PAR/{family}_{sample}_hifi.all_samples.read_data.tsv"
+		log:
+				"log/read_data_{family}_{sample}_hifi_all_samples.log"
+		resources:
+				mem = 24,
+				hrs = 8
+		params:
+				family = "{family}",
+				who = "all",
+				platform = "hifi",
+				child = "{sample}",
+				bam_manifest = BAM_MANIFEST
+		conda:
+				"envs/env.yaml"
+		script:
+				"scripts/check_read_data/check_snv_read_data.py"
+
+
+rule filter_singletons:
+		input:
+				dnms = "validated_calls/chrX_no_PAR/{family}_{sample}.validated_calls.tsv",
+				depth_stats = "read_data/chrX_no_PAR/{family}_{sample}_hifi.all_samples.read_data.tsv"
+		output:
+				singletons = "validated_calls/chrX_no_PAR/{family}_{sample}_unique_snvs.tsv",
+		params:
+				child = "{family}_{sample}",
+				bam_manifest = BAM_MANIFEST
+		log:
+				"log/read_data_{family}_{sample}_hifi_all_samples.log"
+		resources:
+				mem = 8,
+				hrs = 8
+		conda:
+				"envs/env.yaml"
+		script:
+				"scripts/get_singletons.py"
+
+rule exclude_trf:
+	input:
+		singletons = "validated_calls/chrX_no_PAR/{family}_{sample}_unique_snvs.tsv"
+	output:
+		filtered_snvs = "validated_calls/chrX_no_PAR/{family}_{sample}_no_trf.tsv"
+	params:
+		trf_bed = config["trf_bed"]
+	log:
+		"log/pzms_{family}_{sample}_snvs_trf.log"
+	resources:
+		mem = 12,
+		hrs = 2
+	conda:
+		"envs/env.yaml"
+	script:
+		"scripts/filter_trf.py"
+
+rule relitigate:
+	input:
+		pzm_annotated = "validated_calls/chrX_no_PAR/{family}_{sample}_no_trf.tsv",
+		read_data = expand("read_data/chrX_no_PAR/{{family}}_{{sample}}_{platform}.read_summary.tsv", platform = platforms)
+	output:
+		true_dnms = "validated_calls/chrX_no_PAR/{family}_{sample}_relitigated.tsv"
+	log:
+		"log/relitigate_{family}_{sample}.log"
+	resources:
+		mem = 24,
+		hrs = 2
+	params:
+		father = lambda wildcards: child_dict[f"{wildcards.family}_{wildcards.sample}"].father,
+		mother = lambda wildcards: child_dict[f"{wildcards.family}_{wildcards.sample}"].mother,
+		child = "{family}_{sample}"
+	conda:
+		"envs/env.yaml"
+	script:
+		"scripts/relitigate.py"

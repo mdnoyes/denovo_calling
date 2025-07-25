@@ -1,0 +1,70 @@
+##fileformat=VCFv4.2
+##FILTER=<ID=PASS,Description="All filters passed">
+##ALT=<ID=NON_REF,Description="Represents any possible alternative allele not already represented at this location by REF and ALT">
+##FILTER=<ID=LowQual,Description="Low quality">
+##FILTER=<ID=QD2,Description="QD < 2.0">
+##FILTER=<ID=QUAL30,Description="QUAL < 30.0">
+##FILTER=<ID=ReadPosRankSum-20,Description="ReadPosRankSum < -20.0">
+##FILTER=<ID=ReadPosRankSum-8,Description="ReadPosRankSum < -8.0">
+##FILTER=<ID=MONOALLELIC,Description="Site represents one ALT allele in a region with multiple variants that could not be unified into non-overlapping multi-allelic sites">
+##FILTER=<ID=QUAL25,Description="QUAL < 25.0">
+##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Allelic depths for the ref and alt alleles in the order listed">
+##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Approximate read depth (reads with MQ=255 or with bad mates are filtered)">
+##FORMAT=<ID=GQ,Number=1,Type=Integer,Description="Genotype Quality">
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+##FORMAT=<ID=MIN_DP,Number=1,Type=Integer,Description="Minimum DP observed within the GVCF block">
+##FORMAT=<ID=PGT,Number=1,Type=String,Description="Physical phasing haplotype information, describing how the alternate alleles are phased in relation to one another; will always be heterozygous and is not intended to describe called alleles">
+##FORMAT=<ID=PID,Number=1,Type=String,Description="Physical phasing ID information, where each unique ID within a given sample (but not across samples) connects records within a phasing group">
+##FORMAT=<ID=PL,Number=G,Type=Integer,Description="Normalized, Phred-scaled likelihoods for genotypes as defined in the VCF specification">
+##FORMAT=<ID=PS,Number=1,Type=Integer,Description="Phasing set (typically the position of the first variant in the set)">
+##FORMAT=<ID=RGQ,Number=1,Type=Integer,Description="Unconditional reference genotype confidence, encoded as a phred quality -10*log10 p(genotype call is wrong)">
+##FORMAT=<ID=SB,Number=4,Type=Integer,Description="Per-sample component statistics which comprise the Fisher's Exact Test to detect strand bias.">
+##FORMAT=<ID=RNC,Number=2,Type=Character,Description="Reason for No Call in GT: . = n/a, M = Missing data, P = Partial data, I = gVCF input site is non-called, D = insufficient Depth of coverage, - = unrepresentable overlapping deletion, L = Lost/unrepresentable allele (other than deletion), U = multiple Unphased variants present, O = multiple Overlapping variants present, 1 = site is Monoallelic, no assertion about presence of REF or ALT allele">
+##filter="AC > 0"
+##INFO=<ID=BaseQRankSum,Number=1,Type=Float,Description="Z-score from Wilcoxon rank sum test of Alt Vs. Ref base qualities">
+##INFO=<ID=DP,Number=1,Type=Integer,Description="Approximate read depth; some reads may have been filtered">
+##INFO=<ID=END,Number=1,Type=Integer,Description="Stop position of the interval">
+##INFO=<ID=ExcessHet,Number=1,Type=Float,Description="Phred-scaled p-value for exact test of excess heterozygosity">
+##INFO=<ID=FS,Number=1,Type=Float,Description="Phred-scaled p-value using Fisher's exact test to detect strand bias">
+##INFO=<ID=InbreedingCoeff,Number=1,Type=Float,Description="Inbreeding coefficient as estimated from the genotype likelihoods per-sample when compared against the Hardy-Weinberg expectation">
+##INFO=<ID=MLEAC,Number=A,Type=Integer,Description="Maximum likelihood expectation (MLE) for the allele counts (not necessarily the same as the AC), for each ALT allele, in the same order as listed">
+##INFO=<ID=MLEAF,Number=A,Type=Float,Description="Maximum likelihood expectation (MLE) for the allele frequency (not necessarily the same as the AF), for each ALT allele, in the same order as listed">
+##INFO=<ID=MQ,Number=1,Type=Float,Description="RMS Mapping Quality">
+##INFO=<ID=MQRankSum,Number=1,Type=Float,Description="Z-score From Wilcoxon rank sum test of Alt vs. Ref read mapping qualities">
+##INFO=<ID=QD,Number=1,Type=Float,Description="Variant Confidence/Quality by Depth">
+##INFO=<ID=RAW_MQandDP,Number=2,Type=Integer,Description="Raw data (sum of squared MQ and total depth) for improved RMS Mapping Quality calculation. Incompatible with deprecated RAW_MQ formulation.">
+##INFO=<ID=ReadPosRankSum,Number=1,Type=Float,Description="Z-score from Wilcoxon rank sum test of Alt vs. Ref read position bias">
+##INFO=<ID=AC,Number=A,Type=Integer,Description="Total number of alternate alleles in called genotypes">
+##INFO=<ID=AF,Number=A,Type=Float,Description="Estimated allele frequency in the range (0,1]">
+##INFO=<ID=NS,Number=1,Type=Integer,Description="Number of samples with data">
+##INFO=<ID=AN,Number=1,Type=Integer,Description="Total number of alleles in called genotypes">
+##INFO=<ID=SOR,Number=1,Type=Float,Description="Symmetric Odds Ratio of 2x2 contingency table to detect strand bias">
+##INFO=<ID=TRANSMITTED,Number=1,Type=String,Description="transmitted from parent yes or no">
+##INFO=<ID=INH,Number=1,Type=String,Description="de novo">
+##INFO=<ID=CALLER,Number=1,Type=String,Description="gatk or deepvariant">
+##contig=<ID=chr1,length=248387328,assembly=T2T-CHM13v2.fasta>
+##contig=<ID=chr2,length=242696752,assembly=T2T-CHM13v2.fasta>
+##contig=<ID=chr3,length=201105948,assembly=T2T-CHM13v2.fasta>
+##contig=<ID=chr4,length=193574945,assembly=T2T-CHM13v2.fasta>
+##contig=<ID=chr5,length=182045439,assembly=T2T-CHM13v2.fasta>
+##contig=<ID=chr6,length=172126628,assembly=T2T-CHM13v2.fasta>
+##contig=<ID=chr7,length=160567428,assembly=T2T-CHM13v2.fasta>
+##contig=<ID=chr8,length=146259331,assembly=T2T-CHM13v2.fasta>
+##contig=<ID=chr9,length=150617247,assembly=T2T-CHM13v2.fasta>
+##contig=<ID=chr10,length=134758134,assembly=T2T-CHM13v2.fasta>
+##contig=<ID=chr11,length=135127769,assembly=T2T-CHM13v2.fasta>
+##contig=<ID=chr12,length=133324548,assembly=T2T-CHM13v2.fasta>
+##contig=<ID=chr13,length=113566686,assembly=T2T-CHM13v2.fasta>
+##contig=<ID=chr14,length=101161492,assembly=T2T-CHM13v2.fasta>
+##contig=<ID=chr15,length=99753195,assembly=T2T-CHM13v2.fasta>
+##contig=<ID=chr16,length=96330374,assembly=T2T-CHM13v2.fasta>
+##contig=<ID=chr17,length=84276897,assembly=T2T-CHM13v2.fasta>
+##contig=<ID=chr18,length=80542538,assembly=T2T-CHM13v2.fasta>
+##contig=<ID=chr19,length=61707364,assembly=T2T-CHM13v2.fasta>
+##contig=<ID=chr20,length=66210255,assembly=T2T-CHM13v2.fasta>
+##contig=<ID=chr21,length=45090682,assembly=T2T-CHM13v2.fasta>
+##contig=<ID=chr22,length=51324926,assembly=T2T-CHM13v2.fasta>
+##contig=<ID=chrX,length=154259566,assembly=T2T-CHM13v2.fasta>
+##contig=<ID=chrM,length=16569,assembly=T2T-CHM13v2.fasta>
+##contig=<ID=chrY,length=62460029,assembly=T2T-CHM13v2.fasta>
+##reference=file:///net/eichler/vol26/projects/denovo_variation/nobackups/quads_batch_1/reference/T2T-CHM13v2.fasta

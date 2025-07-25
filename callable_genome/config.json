@@ -1,0 +1,8 @@
+{
+  "manifest": "manifest.tab",
+  "bed": "t2t_2.0.bed",
+  "intervals": "intervals.txt",
+  "ref": "/net/eichler/vol28/projects/denovo_variation/nobackups/quads_batch_2/reference/T2T-CHM13v2.fasta",
+  "picard": "/net/eichler/vol28/home/mdnoyes/nobackups/software/picard/picard-tools-2.5.0/picard.jar",
+  "gatk": "/net/gs/vol3/software/modules-sw/GATK/3.7/Linux/RHEL6/x86_64/GenomeAnalysisTK.jar"
+}

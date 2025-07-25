@@ -1,0 +1,198 @@
+import pandas as pd
+from itertools import product
+from itertools import chain
+from dataclasses import dataclass
+
+configfile: "config.json"
+
+VCF_MANIFEST = config["vcf_manifest"]
+BAM_MANIFEST = config["bam_manifest"]
+REF = config["ref"]
+PICARD = config["picard"]
+HIFI_SOURCES = config["hifi_sources"]
+CELL_LINE_SAMPLES = config["cell_line_samples"]
+
+platforms = ["hifi", "ont"]
+
+@dataclass
+class Child:
+	father: str
+	mother: str
+
+vcf_manifest = pd.read_csv(VCF_MANIFEST, sep="\t", low_memory=False, header=0, dtype=str)
+
+manifest_df = pd.read_csv(BAM_MANIFEST, sep="\t", low_memory=False, header=0, dtype=str, keep_default_na=False)
+families = list(set(manifest_df.family))
+sample_dict = {}
+child_dict = {}
+
+for idx, row in manifest_df.iterrows():
+	sm = row["sample"]
+	fm = row["family"]
+	sm_id = f"{fm}_{sm}"
+	if fm not in sample_dict:
+		sample_dict[fm] = []
+	sample_dict[fm].append(sm)
+	if row["father"] and row["mother"]:
+		child_dict[sm_id] = Child(row['father'], row['mother'])
+
+children = child_dict.keys()
+samples = set(chain(*sample_dict.values()))
+
+localrules: all
+
+def filter_children(*args, **kwargs):
+	for wc_comb in product(*args, **kwargs):
+		sm_id = "_".join(x[1] for x in wc_comb[0:2])
+		if sm_id in children:
+			yield(wc_comb)
+
+def get_trio(wildcards):
+	child = '_'.join([wildcards.family, wildcards.sample])
+	father = child_dict[child].father
+	mother = child_dict[child].mother
+
+	return [father, mother, child]
+
+def get_bams(wildcards):
+	bams = []
+	samples = [wildcards.sample, 'fa', 'mo']
+	for sample in samples:
+		bams.append(manifest_df.loc[(manifest_df['family'] == wildcards.family) &
+							(manifest_df['sample'] == sample), wildcards.platform].values[0])
+	return bams
+
+def get_gatk_vcf(wildcards):
+	return vcf_manifest.loc[vcf_manifest['family'] == wildcards.family]['gatk'].values[0]
+
+def getbed(wildcards):
+	return f'beds/{wildcards.family}_{wildcards.sample}.bed'
+
+def get_denovo_vcf(wildcards):
+	return f'vcfs/{wildcards.family}_{wildcards.sample}.vcf.gz'
+
+def getdenovo(wildcards):
+	return f'denovo_files/{wildcards.family}_{wildcards.sample}.denovo.txt'
+
+def get_window(wildcards):
+	if wildcards.platform == 'hifi':
+		return 40000
+	elif wildcards.platform == 'ont':
+		return 80000
+
+wildcard_constraints:
+	sample='|'.join(samples),
+	family='|'.join(families)
+
+rule all :
+	input :
+		expand("expanded_vcfs/{family}_{sample}.expanded.norm.vcf", filter_children, family = families, sample = samples),
+		expand("haplotypes/{family}_{sample}.{platform}.haplotypes.tsv", filter_children, family = families, sample = samples, platform = platforms),
+		expand("results/{family}_{sample}.haplotypes.tsv", filter_children, family = families, sample = samples)
+
+rule get_nearby_variants:
+	input:
+		denovo_bed = getbed,
+		denovo_vcf = get_denovo_vcf,
+		full_vcf = get_gatk_vcf
+	output:
+		expanded_vcf = temp("expanded_vcfs/{family}_{sample}.expanded.vcf.gz")
+	resources:
+		mem = 2,
+		hrs = 20
+	params:
+		father = lambda wildcards: child_dict[f"{wildcards.family}_{wildcards.sample}"].father,
+		mother = lambda wildcards: child_dict[f"{wildcards.family}_{wildcards.sample}"].mother,
+		sample_id = "{family}_{sample}"
+	shell: """
+		source /etc/profile.d/modules.sh
+		module load tabix/0.2.6
+		module load htslib/1.19 bcftools/1.19
+
+		bcftools view {input.denovo_vcf} > {params.sample_id}.bigger.vcf
+
+		tabix -h -R {input.denovo_bed} {input.full_vcf} |
+			bcftools view -H -s {params.father},{params.mother},{params.sample_id} |
+			awk '{{if((length($4)==1)&&(length($5)==1)) {{print $0}}}}' |
+			grep -v "\*" >> {params.sample_id}.bigger.vcf
+
+		grep -v MONOALLELIC {params.sample_id}.bigger.vcf | bcftools annotate -h reheader_lines.txt  | awk '!visited[$1,$2]++' | bcftools sort -O z -o {output.expanded_vcf}
+		tabix {output.expanded_vcf}
+
+		rm {params.sample_id}.bigger.vcf
+
+	"""
+
+rule normalize_vcf:
+	input:
+		expanded_vcf = "expanded_vcfs/{family}_{sample}.expanded.vcf.gz"
+	output:
+		norm_vcf = "expanded_vcfs/{family}_{sample}.expanded.norm.vcf"
+	resources:
+		mem = 2,
+		hrs = 20
+	params:
+		sample_id = "{family}_{sample}"
+	shell: """
+		source /etc/profile.d/modules.sh
+		module load tabix/0.2.6
+		module load htslib/1.19  bcftools/1.19
+
+		bcftools norm \
+			-r chr1,chr2,chr3,chr4,chr5,chr6,chr7,chr8,chr9,chr10,chr11,chr12,chr13,chr14,chr15,chr16,chr17,chr18,chr19,chr20,chr21,chr22 \
+			-d all \
+			{input.expanded_vcf} > {output.norm_vcf}
+
+	"""
+
+rule find_tagging_snps:
+	input:
+		vcf = "expanded_vcfs/{family}_{sample}.expanded.norm.vcf",
+		dnms = getdenovo
+	output:
+		tagging_snps = "tagging_snps/{family}_{sample}.{platform}.tagging_snps.tsv"
+	params:
+		window_size = get_window
+	resources:
+		mem = 2,
+		hrs = 2
+	conda:
+		"envs/env.yaml"
+	script:
+		"scripts/get_tagging_snps.py"
+
+rule check_read_data:
+	input:
+		denovo_file = getdenovo,
+		tagging_snps = "tagging_snps/{family}_{sample}.{platform}.tagging_snps.tsv"
+	output:
+		platform_haplotypes = "haplotypes/{family}_{sample}.{platform}.haplotypes.tsv"
+	params:
+		bam_manifest = BAM_MANIFEST,
+		window_size = get_window,
+		child = "{family}_{sample}",
+		hifi_sources = HIFI_SOURCES,
+		platform = "{platform}",
+		cell_line = CELL_LINE_SAMPLES
+	resources:
+		mem = 2,
+		hrs = 2
+	conda:
+		"envs/env.yaml"
+	script:
+		"scripts/check_snv_read_data.py"
+
+rule assign_haplotypes:
+	input:
+		annotated_snvs = "../../snv_calling/results/{family}_{sample}.snv_calls.tsv",
+		hifi_haps = "haplotypes/{family}_{sample}.hifi.haplotypes.tsv",
+		ont_haps = "haplotypes/{family}_{sample}.ont.haplotypes.tsv"
+	output:
+		final_haps = "results/{family}_{sample}.haplotypes.tsv"
+	resources:
+		mem = 2,
+		hrs = 2
+	conda:
+		"envs/env.yaml"
+	script:
+		"scripts/combine_haplotypes.py"

@@ -1,0 +1,5 @@
+{
+  "ref": "/net/eichler/vol26/eee_shared/assemblies/CHM13/T2T/v2.0/T2T-CHM13v2.fasta",
+  "bam_manifest": "/net/eichler/vol28/projects/denovo_variation/nobackups/combined_batches/manifests/bam_manifest.tab",
+  "hifi_sources" : "/net/eichler/vol28/projects/denovo_variation/nobackups/combined_batches/manifests/hifi_sources.tsv"
+}

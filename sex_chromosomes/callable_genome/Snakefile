@@ -1,0 +1,191 @@
+import pandas as pd
+from itertools import product
+from itertools import chain
+from dataclasses import dataclass
+
+configfile: "config.json"
+
+REF = config["ref"]
+MANIFEST = config["manifest"]
+BED = config["bed"]
+INTERVALS = config["intervals"]
+PICARD = config["picard"]
+
+@dataclass
+class Child:
+	father: str
+	mother: str
+
+intervals = []
+with open(INTERVALS, 'r') as interval_file:
+	for line in interval_file:
+		intervals.append(line.rstrip())
+
+male_chromosomes = ['chrX', 'chrY']
+female_chromosomes = ['chrX']
+chromosomes = ['chrX', 'chrY']
+
+trio_members = ['father', 'mother', 'child']
+
+manifest_df = pd.read_csv(MANIFEST, sep="\t", low_memory=False, header=0, dtype=str, keep_default_na=False)
+families = list(set(manifest_df.family))
+child_dict = {}
+sample_dict = {}
+males = []
+females = []
+
+for idx, row in manifest_df.iterrows():
+	sm = row["sample"]; fm = row["family"]
+	sm_id = f"{fm}_{sm}"
+	if(fm not in sample_dict):
+		sample_dict[fm] = []
+	sample_dict[fm].append(sm)
+	if row["father"] and row["mother"]:
+		child_dict[sm_id] = Child(row['father'],row['mother'])
+		if row["sex"] == "F":
+			females.append(sm_id)
+		if row["sex"] == "M":
+			males.append(sm_id)
+
+samples = set(chain(*sample_dict.values()))
+children = females + males
+
+localrules: all
+def filter_children(*args, **kwargs):
+	for wc_comb in product(*args, **kwargs):
+			sm_id = "_".join(x[1] for x in wc_comb[0:2])
+			if sm_id in children:
+					yield(wc_comb)
+
+def sex_filter(*args, **kwargs):
+	for wc_comb in product(*args, **kwargs):
+		sm_id = "_".join(x[1] for x in wc_comb[0:2])
+		if sm_id in females and wc_comb[2][1] in female_chromosomes:
+			yield(wc_comb)
+		elif sm_id in males and wc_comb[2][1] in male_chromosomes:
+			yield (wc_comb)
+
+def get_file_list(child, chromosome, family_member):
+	relevant_intervals = [x for x in intervals if x.startswith(f'{chromosome}_')]
+	if family_member == 'father':
+		sample = child_dict[child].father
+	elif family_member == 'mother':
+		sample = child_dict[child].mother
+	else:
+		sample = child
+
+	file_list = [f'read_counts/{sample}.{interval}.tsv.gz' for interval in relevant_intervals]
+
+	return file_list
+
+def get_sex(wildcards):
+	sample = f'{wildcards.family}_{wildcards.sample}'
+	if sample in females:
+		return "female"
+	else:
+		return "male"
+
+def get_sex_bed(wildcards):
+	sample = f'{wildcards.family}_{wildcards.sample}'
+	if sample in females:
+		return "bed/female.bed"
+	else:
+		return "bed/male.bed"
+
+def get_callable_input(wildcards):
+	sample = f'{wildcards.family}_{wildcards.sample}'
+	file_list = [f"callable_sites/{sample}.chrX.callable.tsv.gz"]
+	if sample in males:
+		file_list.append(f"callable_sites/{sample}.chrY.callable.tsv.gz")
+
+	return file_list
+
+wildcard_constraints:
+	sample = "|".join(samples),
+	family = "|".join(families)
+
+rule all:
+	input:
+		expand("chr_files/{family}_{sample}.{chr}.candidate_callable.tsv.gz", sex_filter, family = families, sample = samples, chr = chromosomes),
+		expand("callable_sites/{family}_{sample}.{chr}.callable.tsv.gz", sex_filter, family = families, sample = samples, chr =chromosomes),
+		expand("callable_beds/{family}_{sample}.callable.bed", filter_children, family = families, sample = samples),
+		expand("results/{family}_{sample}.callable_regions.tsv", filter_children, family = families, sample = samples)
+
+rule combine_vcfs:
+	input:
+		sample = "vcfs/{family}_{sample}.{chr}.vcf.gz",
+		father = lambda wildcards: "vcfs/" + child_dict[f"{wildcards.family}_{wildcards.sample}"].father + f".{wildcards.chr}.vcf.gz",
+		mother = lambda wildcards: "vcfs/" + child_dict[f"{wildcards.family}_{wildcards.sample}"].mother + f".{wildcards.chr}.vcf.gz"
+	output:
+		combined_data = "chr_files/{family}_{sample}.{chr}.candidate_callable.tsv.gz"
+	params:
+		sex = get_sex,
+		chrom = "{chr}"
+	log:
+		"log/combine_vcfs_{family}_{sample}_{chr}.log"
+	resources:
+		mem = 16,
+		hrs = 4
+	conda:
+		"envs/env.yaml"
+	script:
+		"scripts/combine_vcfs.py"
+
+
+rule get_callable_sites:
+	input:
+		genotyped_sites = "chr_files/{family}_{sample}.{chr}.candidate_callable.tsv.gz",
+		dad_intervals = lambda wildcards: get_file_list(f'{wildcards.family}_{wildcards.sample}', f'{wildcards.chr}', 'father'),
+		mom_intervals = lambda wildcards: get_file_list(f'{wildcards.family}_{wildcards.sample}', f'{wildcards.chr}', 'mother'),
+		child_intervals = lambda wildcards: get_file_list(f'{wildcards.family}_{wildcards.sample}', f'{wildcards.chr}', 'child')
+	output:
+		callable_sites = "callable_sites/{family}_{sample}.{chr}.callable.tsv.gz",
+		dnms = "candidate_dnms/{family}_{sample}.{chr}.dnms.tsv"
+	params:
+		sex = get_sex,
+		chrom = "{chr}"
+	log:
+		"log/get_callable_{family}_{sample}_{chr}.log"
+	resources:
+		mem = 4,
+		hrs = 48
+	conda:
+		"envs/env.yaml"
+	script:
+		"scripts/get_callable_sites.py"
+
+rule make_callable_bed:
+	input:
+		callable_sites = get_callable_input
+	output:
+		temp_bed = temp("callable_beds/intermediate_{family}_{sample}.callable.bed"),
+		full_bed = "callable_beds/{family}_{sample}.callable.bed"
+	params:
+		sex_bed = get_sex_bed
+	log:
+		"log/get_callable_bed_{family}_{sample}.log"
+	resources:
+		mem = 4,
+		hrs = 48
+	conda:
+		"envs/env.yaml"
+	script:
+		"scripts/make_callable_beds.py"
+
+rule calculate_callable_size:
+	input:
+		callable_bed = "callable_beds/{family}_{sample}.callable.bed"
+	output:
+		callable_sizes = "results/{family}_{sample}.callable_regions.tsv"
+	log:
+		"log/get_callable_bed_{family}_{sample}.log"
+	params:
+		sex = get_sex,
+		sample = "{family}_{sample}"
+	resources:
+		mem = 4,
+		hrs = 48
+	conda:
+		"envs/env.yaml"
+	script:
+		"scripts/calculate_accessible_sizes.py"
