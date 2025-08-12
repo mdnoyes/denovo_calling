@@ -92,6 +92,85 @@ snakesub -j [number of jobs] --use-conda
 
 - Cluster integration beyond SGE/DRMAA is not provided here. If running on a different scheduler, adapt the submission command accordingly.
 
+---
+
+Although we cannot provide demo data from our samples, you can test these pipelines using trio data from Genome in a Bottle [(GIAB)](https://www.nist.gov/programs-projects/genome-bottle) by following these instructions for the GIAB Ashkenazi trio (HG002—son, HG003—father, HG004—mother), all aligned to **GRCh38**.
+
+
+1. Download the BAMs
+
+You will need aligned HiFi, ONT, and Illumina BAMs for each memeber of the trio. Run the following commands to fetch the data into your directory:
+
+```bash
+
+# HG002 (son)
+wget ftp://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/data/AshkenazimTrio/HG002_NA24385_son/NIST_NA24385_HG002_HiSeq300x/HG002_HiSeq300x_GRCh38.bam
+wget ftp://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/data/AshkenazimTrio/HG002_NA24385_son/NIST_NA24385_HG002_HiSeq300x/HG002_HiSeq300x_GRCh38.bam.bai
+
+wget ftp://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/data/AshkenazimTrio/HG002_NA24385_son/PacBio_CCS_15kb/HG002_PacBio_CCS_15kb_GRCh38.bam
+wget ftp://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/data/AshkenazimTrio/HG002_NA24385_son/PacBio_CCS_15kb/HG002_PacBio_CCS_15kb_GRCh38.bam.bai
+
+wget ftp://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/data/AshkenazimTrio/HG002_NA24385_son/ONT_UL/HG002_ONT_UL_GRCh38.bam
+wget ftp://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/data/AshkenazimTrio/HG002_NA24385_son/ONT_UL/HG002_ONT_UL_GRCh38.bam.bai
+
+# HG003 (father)
+wget ftp://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/data/AshkenazimTrio/HG003_NA24149_father/Illumina300XWGS/HG003_Illumina_300x_GRCh38.bam
+wget ftp://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/data/AshkenazimTrio/HG003_NA24149_father/Illumina300XWGS/HG003_Illumina_300x_GRCh38.bam.bai
+
+wget ftp://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/data/AshkenazimTrio/HG003_NA24149_father/PacBio_CCS_15kb/HG003_PacBio_CCS_15kb_GRCh38.bam
+wget ftp://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/data/AshkenazimTrio/HG003_NA24149_father/PacBio_CCS_15kb/HG003_PacBio_CCS_15kb_GRCh38.bam.bai
+
+wget ftp://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/data/AshkenazimTrio/HG003_NA24149_father/ONT_UL/HG003_ONT_UL_GRCh38.bam
+wget ftp://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/data/AshkenazimTrio/HG003_NA24149_father/ONT_UL/HG003_ONT_UL_GRCh38.bam.bai
+
+# HG004 (mother)
+wget ftp://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/data/AshkenazimTrio/HG004_NA24143_mother/Illumina300XWGS/HG004_Illumina_300x_GRCh38.bam
+wget ftp://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/data/AshkenazimTrio/HG004_NA24143_mother/Illumina300XWGS/HG004_Illumina_300x_GRCh38.bam.bai
+
+wget ftp://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/data/AshkenazimTrio/HG004_NA24143_mother/PacBio_CCS_15kb/HG004_PacBio_CCS_15kb_GRCh38.bam
+wget ftp://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/data/AshkenazimTrio/HG004_NA24143_mother/PacBio_CCS_15kb/HG004_PacBio_CCS_15kb_GRCh38.bam.bai
+
+wget ftp://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/data/AshkenazimTrio/HG004_NA24143_mother/ONT_UL/HG004_ONT_UL_GRCh38.bam
+wget ftp://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/data/AshkenazimTrio/HG004_NA24143_mother/ONT_UL/HG004_ONT_UL_GRCh38.bam.bai
+```
+
+2. Download the VCFs 
+
+```bash
+wget ftp://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/release/AshkenazimTrio/HG002_GRCh38/latest/HG002_GRCh38_1_22_v4.2.1_benchmark.vcf.gz
+wget ftp://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/release/AshkenazimTrio/HG002_GRCh38/latest/HG002_GRCh38_1_22_v4.2.1_benchmark.vcf.gz.tbi
+
+wget ftp://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/release/AshkenazimTrio/HG003_GRCh38/latest/HG003_GRCh38_1_22_v4.2.1_benchmark.vcf.gz
+wget ftp://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/release/AshkenazimTrio/HG003_GRCh38/latest/HG003_GRCh38_1_22_v4.2.1_benchmark.vcf.gz.tbi
+
+wget ftp://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/release/AshkenazimTrio/HG004_GRCh38/latest/HG004_GRCh38_1_22_v4.2.1_benchmark.vcf.gz
+wget ftp://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/release/AshkenazimTrio/HG004_GRCh38/latest/HG004_GRCh38_1_22_v4.2.1_benchmark.vcf.gz.tbi
+```
+
+3. Combine VCFs into one for the trio
+
+Although GIAB does not provide separate GATK and DeepVariant files like these pipelines expect, you can use just one VCF by listing the same file twice in `vcf_manifest.tab`. Generate this file by merging variant data from the three VCFs.
+
+ ```bash
+bcftools merge -m all -Oz \
+    -o GIAB_trio_GRCh38_merged.vcf.gz \
+    HG002.vcf.gz HG003.vcf.gz HG004.vcf.gz
+
+tabix -p vcf GIAB_trio_GRCh38_merged.vcf.gz
+```
+
+4. Reference Genome (GRCh38)
+   
+Make sure to use GRCh38 as the reference - you will need to update this in your `config.json` files. You can download the same version used by GIAB:
+```bash
+wget ftp://ftp-trace.ncbi.nlm.nih.gov/giab/release/references/GRCh38_no_alt_analysis_set.fna.gz
+gunzip GRCh38_no_alt_analysis_set.fna.gz
+samtools faidx GRCh38_no_alt_analysis_set.fna
+```
+
+Once you have obtained these data, create manifests that match those in `manifests/`, update your `config.json` files, and you should be good to go! Happy DNM hunting!
+
+
 ## Reproduction Instructions
 
 - The original data used for analysis are available in the SFARI Base under accession **SFARI_DS714840** and in the NIH NDA **Collection ID 3780**. Access may require data use agreements through those portals.
